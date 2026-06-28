@@ -1,54 +1,43 @@
 #include <iostream>
-extern "C" {
-    #include <lua.h>
-    #include <lualib.h>
-    #include <lauxlib.h>
-}
+#define SOL_ALL_SAFETIES_ON 1 // Active les vérifications de sécurité strictes de Sol2
+#include <sol/sol.hpp>        // La bibliothèque Sol2
 
 int main() {
-    // 1. Initialisation de l'état de la machine virtuelle Lua
-    lua_State* L = luaL_newstate();
-    luaL_openlibs(L); // Charger les bibliothèques standards de Lua (print, math, etc.)
+    // 1. Initialisation de la machine virtuelle Lua avec Sol2
+    sol::state lua;
+    lua.open_libraries(sol::lib::base, sol::lib::math); // Ouvre les bibliothèques de base
 
-    // 2. Charger et exécuter le fichier Lua
-    if (luaL_dofile(L, "config.lua") != LUA_OK) {
-        std::cerr << "[-] Erreur lors du chargement de config.lua : " 
-                  << lua_tostring(L, -1) << std::endl;
-        lua_close(L);
+    // 2. Charger le fichier de configuration de manière sécurisée
+    auto load_result = lua.script_file("config.lua");
+    if (!load_result.valid()) {
+        sol::error err = load_result;
+        std::cerr << "[-] Erreur de chargement Lua : " << err.what() << std::endl;
         return 1;
     }
 
-    // --- EXEMPLE 1 : Lire des variables globales Lua depuis le C++ ---
-    lua_getglobal(L, "drone_name"); // Pousse la variable sur la pile
-    lua_getglobal(L, "max_altitude"); 
+    // --- EXEMPLE 1 : Lire des variables globales de manière intuitive ---
+    // Sol2 surcharge l'opérateur [] pour accéder aux variables comme dans une Map/Dictionnaire
+    std::string name = lua["drone_name"];
+    int alt = lua["max_altitude"];
+    
+    std::cout << "[C++ / Sol2] Donnees lues -> Nom: " << name << " | Alt Max: " << alt << "m\n\n";
 
-    if (lua_isstring(L, -2) && lua_isnumber(L, -1)) {
-        std::string name = lua_tostring(L, -2);
-        int alt = lua_tointeger(L, -1);
-        std::cout << "[C++] Données lues depuis Lua -> Nom: " << name << " | Alt Max: " << alt << "m\n\n";
-    }
-    lua_pop(L, 2); // Nettoyer la pile (retirer les 2 éléments)
-
-
-    // --- EXEMPLE 2 : Appeler une fonction Lua depuis le C++ ---
-    lua_getglobal(L, "calculate_thrust"); // 1. Récupérer la fonction Lua
-
-    if (lua_isfunction(L, -1)) {
-        lua_pushnumber(L, 2.5);  // 2. Pousser le 1er argument (Poids = 2.5 kg)
-        lua_pushnumber(L, 9.81); // 3. Pousser le 2e argument  (Gravité = 9.81)
-
-        // 4. Exécuter l'appel : 2 arguments, 1 résultat attendu, 0 pour la gestion d'erreur personnalisée
-        if (lua_pcall(L, 2, 1, 0) != LUA_OK) {
-            std::cerr << "[-] Erreur d'exécution de la fonction Lua\n";
+    // --- EXEMPLE 2 : Récupérer et exécuter la fonction Lua ---
+    // Sol2 convertit automatiquement la fonction Lua en un objet appelable en C++
+    sol::protected_function calc_thrust = lua["calculate_thrust"];
+    
+    if (calc_thrust.valid()) {
+        // Appel direct comme une fonction C++ classique, avec gestion des types automatique
+        auto result = calc_thrust(2.5, 9.81);
+        
+        if (result.valid()) {
+            double thrust = result; // Conversion implicite sécurisée du résultat
+            std::cout << "[C++ / Sol2] Poussee totale requise : " << thrust << " Newtons.\n";
         } else {
-            // 5. Récupérer le résultat au sommet de la pile (index -1)
-            double thrust = lua_tonumber(L, -1);
-            std::cout << "[C++] Résultat retourné par Lua -> Poussée totale requise : " << thrust << " Newtons.\n";
-            lua_pop(L, 1); // Nettoyer le résultat
+            sol::error err = result;
+            std::cerr << "[-] Erreur pendant l'execution Lua : " << err.what() << std::endl;
         }
     }
 
-    // 3. Fermeture propre de la VM Lua
-    lua_close(L);
     return 0;
 }
